@@ -1,0 +1,84 @@
+#!/bin/bash
+
+executable="build/meshinator"
+buildcmd="make"
+logdir="build/.buildlog"
+
+printf "Starting continuous rebuild...\n\n"
+
+#for ever:
+#    find newest file in src
+#    if first or new_ts > stored_ts
+#        build
+#        stop executable
+#        start executable
+#        stored_ts=new_ts
+
+function list_sources {
+    for file in `ls -t $1`; do
+        absolutefile="$1/$file"
+
+        if [ -d "$absolutefile" ]; then
+            list_sources $absolutefile
+        else
+            echo `stat -f "%m %N" $absolutefile`
+        fi
+    done
+}
+
+mkdir -p $logdir
+
+old_lst=""
+pid=""
+
+while :; do
+    lst=`list_sources src | sort -rn`
+    if [[ $old_lst != $lst ]]; then
+        if [[ "" != old_lst ]]; then
+            printf "[%s] Source change detected... \n" "`date`"
+        fi
+
+        should_start="true"
+
+        logfile="$logdir/`date +%F.%H-%m-%S.buildlog`"
+        printf "  * Rebuilding... "
+        #if `$buildcmd >>$logfile 2>&1`; then
+
+        log=`$buildcmd 2>&1 >$logfile`
+        retval=$?
+
+        if [ 0 == $retval ]; then
+            printf "OK\n"
+        else
+            printf "FAILED\n"
+            should_start="false"
+            printf "\n----\n%s\n----\n\n" "$log"
+        fi
+
+        if [[ "" != $pid && "true" == $should_start ]]; then
+            ps -p $pid 2>&1 >/dev/null
+            running=$?
+
+            if [ 0 == $running ]; then
+                printf "  * Stopping... "
+                if kill $pid; then
+                    printf "OK\n"
+                else
+                    printf "FAILED\n"
+                    should_start="false"
+                fi
+            fi
+        fi
+
+        if [[ "true" == $should_start ]]; then
+            printf "  * Starting... "
+
+            $executable &
+            pid=$!
+            printf "OK (%s)\n" $pid
+        fi
+    else
+        sleep .05
+    fi
+    old_lst=$lst
+done
